@@ -19,7 +19,25 @@ fn download(body: &str) -> Download {
     })
 }
 /// Turns a new library back into the version 2 schema, for tests that write older text.
-const UNDO_LATER_MIGRATIONS: &str = "ALTER TABLE feeds DROP COLUMN revision; DROP TABLE meta;";
+///
+/// SQLite drops one column per statement, and refuses one an index still covers, so the
+/// indexes and tables of the later migrations go first.
+const UNDO_LATER_MIGRATIONS: &str = "
+ALTER TABLE feeds DROP COLUMN revision;
+DROP TABLE meta;
+DROP INDEX feed_feedbin;
+DROP INDEX article_feedbin;
+ALTER TABLE feeds DROP COLUMN feedbin_id;
+ALTER TABLE feeds DROP COLUMN feedbin_tagging;
+ALTER TABLE feeds DROP COLUMN feedbin_subscription;
+ALTER TABLE feeds DROP COLUMN feedbin_title;
+ALTER TABLE feeds DROP COLUMN feedbin_folder;
+ALTER TABLE articles DROP COLUMN feedbin_id;
+ALTER TABLE article_state DROP COLUMN read_pending;
+ALTER TABLE article_state DROP COLUMN starred_pending;
+DROP TABLE feedbin_deleted;
+DROP TABLE feedbin_meta;
+";
 /// The feed's current revision, as a refresh would see it.
 fn revision(s: &Store, feed: FeedId) -> i64 {
     s.library()
@@ -1191,6 +1209,7 @@ fn callers_can_tell_the_errors_they_act_on_apart() {
         Some(Error::DuplicateFeed(_)) => "duplicate".into(),
         Some(Error::NewerDatabase) => "newer".into(),
         Some(Error::Validation(_)) => "validation".into(),
+        Some(Error::Feedbin(_)) => "feedbin".into(),
         None => format!("other: {e}"),
     };
     let s = Store::open(":memory:").unwrap();

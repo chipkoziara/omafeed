@@ -102,9 +102,18 @@ impl Store {
             };
             changed.push((id, title));
         }
+        let sync = u8::from(self.feedbin_linked());
         for (id, _) in &changed {
             tx.execute(
-                "UPDATE article_state SET read = COALESCE(?1, read), starred = COALESCE(?2, starred) WHERE article_id = ?3",
+                &format!(
+                    "UPDATE article_state SET read = COALESCE(?1, read),
+                            starred = COALESCE(?2, starred),
+                            read_pending = CASE WHEN {sync} AND ?1 IS NOT NULL AND read <> ?1
+                                                THEN 1 ELSE read_pending END,
+                            starred_pending = CASE WHEN {sync} AND ?2 IS NOT NULL AND starred <> ?2
+                                                   THEN 1 ELSE starred_pending END
+                     WHERE article_id = ?3"
+                ),
                 params![patch.read, patch.starred, id],
             )?;
         }
@@ -113,8 +122,17 @@ impl Store {
 
     /// Change one article as `patch` says. An article that no longer exists is left alone.
     pub fn set_state(&self, id: ArticleId, patch: StatePatch) -> Result<()> {
+        let sync = u8::from(self.feedbin_linked());
         self.conn.execute(
-            "UPDATE article_state SET read = COALESCE(?1, read), starred = COALESCE(?2, starred) WHERE article_id = ?3",
+            &format!(
+                "UPDATE article_state SET read = COALESCE(?1, read),
+                        starred = COALESCE(?2, starred),
+                        read_pending = CASE WHEN {sync} AND ?1 IS NOT NULL AND read <> ?1
+                                            THEN 1 ELSE read_pending END,
+                        starred_pending = CASE WHEN {sync} AND ?2 IS NOT NULL AND starred <> ?2
+                                               THEN 1 ELSE starred_pending END
+                 WHERE article_id = ?3"
+            ),
             params![patch.read, patch.starred, id],
         )?;
         Ok(())
@@ -122,8 +140,13 @@ impl Store {
 
     /// Mark one article read or unread; an article that does not exist is left alone.
     pub fn set_read(&self, id: ArticleId, read: bool) -> Result<()> {
+        let sync = u8::from(self.feedbin_linked());
         self.conn.execute(
-            "UPDATE article_state SET read = ?1 WHERE article_id = ?2",
+            &format!(
+                "UPDATE article_state SET read = ?1,
+                        read_pending = CASE WHEN {sync} AND read <> ?1 THEN 1 ELSE read_pending END
+                 WHERE article_id = ?2"
+            ),
             params![read, id],
         )?;
         Ok(())
@@ -131,8 +154,14 @@ impl Store {
 
     /// Star or unstar one article; an article that does not exist is left alone.
     pub fn set_starred(&self, id: ArticleId, value: bool) -> Result<()> {
+        let sync = u8::from(self.feedbin_linked());
         self.conn.execute(
-            "UPDATE article_state SET starred = ?1 WHERE article_id = ?2",
+            &format!(
+                "UPDATE article_state SET starred = ?1,
+                        starred_pending = CASE WHEN {sync} AND starred <> ?1
+                                               THEN 1 ELSE starred_pending END
+                 WHERE article_id = ?2"
+            ),
             params![value, id],
         )?;
         Ok(())
@@ -141,8 +170,10 @@ impl Store {
     /// Mark every unread article matching `q` read, returning the changed IDs for undo.
     pub fn mark_read(&self, q: &Query) -> Result<Vec<ArticleId>> {
         let (predicate, values) = self.predicate(q)?;
+        let sync = u8::from(self.feedbin_linked());
         let sql = format!(
-            "UPDATE article_state SET read = 1
+            "UPDATE article_state SET read = 1,
+                    read_pending = CASE WHEN {sync} THEN 1 ELSE read_pending END
              WHERE read = 0 AND article_id IN (SELECT a.id {ARTICLE_JOINS} WHERE {predicate})
              RETURNING article_id"
         );
@@ -155,8 +186,13 @@ impl Store {
 
     /// Mark unread again the articles a [`Store::mark_read`] returned.
     pub fn undo_read(&self, ids: &[ArticleId]) -> Result<()> {
+        let sync = u8::from(self.feedbin_linked());
         self.conn.execute(
-            "UPDATE article_state SET read = 0 WHERE article_id IN (SELECT value FROM json_each(?1))",
+            &format!(
+                "UPDATE article_state SET read = 0,
+                        read_pending = CASE WHEN {sync} THEN 1 ELSE read_pending END
+                 WHERE article_id IN (SELECT value FROM json_each(?1))"
+            ),
             [serde_json::to_string(ids)?],
         )?;
         Ok(())

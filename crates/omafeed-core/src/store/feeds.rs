@@ -174,11 +174,17 @@ impl Store {
         )?)
     }
 
-    /// Remove a feed and all its articles, starred ones included.
+    /// Remove a feed and all its articles, starred ones included. With a Feedbin account, its
+    /// subscription is remembered so the next sync removes it there too.
     pub fn delete_feed(&self, id: FeedId) -> Result<()> {
-        self.conn.execute("DELETE FROM feeds WHERE id = ?1", [id])?;
-        self.articles_changed();
-        Ok(())
+        self.immediate(|s| {
+            if s.feedbin_linked() {
+                s.feedbin_queue_deletion(id)?;
+            }
+            s.conn.execute("DELETE FROM feeds WHERE id = ?1", [id])?;
+            s.articles_changed();
+            Ok(())
+        })
     }
 
     /// Store a successful download of the feed `feed_id` at `revision`, made at `now`, and

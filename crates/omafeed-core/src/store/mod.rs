@@ -1,6 +1,7 @@
 //! The library database: one SQLite connection ([`Store`]) and the worker thread that owns it
 //! ([`Db`]). Each file adds one concern's methods to `Store`.
 mod articles;
+pub mod feedbin;
 mod feeds;
 mod folders;
 mod schema;
@@ -56,6 +57,9 @@ pub struct Store {
     vocabulary_loads: Cell<u64>,
     /// Whether content filters are set. Without any, queries stay exactly as they were.
     filtering: Cell<bool>,
+    /// Whether a Feedbin account is configured. Without one, read and star changes stay local
+    /// and nothing is recorded for a sync to push.
+    feedbin: Cell<bool>,
 }
 
 /// Starred articles stay visible: a filter should not make something saved on purpose vanish.
@@ -83,7 +87,26 @@ impl Store {
             article_writes: Cell::default(),
             vocabulary_loads: Cell::default(),
             filtering: Cell::default(),
+            feedbin: Cell::default(),
         })
+    }
+
+    /// Say whether a Feedbin account is configured. Read and star changes are recorded for a
+    /// sync to push only while one is; turning it on leaves every article alone until the next
+    /// sync, which pulls the account's own state first.
+    pub fn set_feedbin(&self, linked: bool) {
+        self.feedbin.set(linked);
+    }
+
+    /// Whether read and star changes are recorded for a sync to push.
+    pub(super) fn feedbin_linked(&self) -> bool {
+        self.feedbin.get()
+    }
+
+    /// Rows this connection has written since it was opened, for a caller that must tell a
+    /// sync that changed nothing from one that did.
+    pub fn write_count(&self) -> u64 {
+        self.conn.total_changes()
     }
 
     /// Replace the content filters applied to article lists, counts and bulk mark-read.

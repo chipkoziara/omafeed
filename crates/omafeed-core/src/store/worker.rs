@@ -37,6 +37,12 @@ impl Db {
         }));
     }
 
+    /// Say whether a Feedbin account is configured, as [`Store::set_feedbin`] does, before any
+    /// change that should be pushed.
+    pub fn set_feedbin(&self, linked: bool) {
+        let _ = self.sender.send(Box::new(move |s| s.set_feedbin(linked)));
+    }
+
     /// Run `f` on the worker thread, after everything sent before it, and wait for its result.
     pub async fn call<T: Send + 'static>(
         &self,

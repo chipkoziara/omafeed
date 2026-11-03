@@ -17,6 +17,9 @@ const MIGRATIONS: &[Migration] = &[
     Migration::Rust(reextract_text),
     // Feed revisions, so a refresh that raced an edit or a deletion stores nothing.
     Migration::Sql(FEED_REVISIONS),
+    // Feedbin sync: what the remote side calls each row, which read/star changes it has not
+    // been told yet, and what it still has to be told about.
+    Migration::Sql(FEEDBIN),
 ];
 
 const SCHEMA_V1: &str = r#"
@@ -77,6 +80,39 @@ CREATE TRIGGER article_update AFTER UPDATE ON articles BEGIN
     INSERT INTO article_fts(rowid, title, author, text) VALUES(new.id, new.title, new.author, new.text);
 END;
 "#;
+
+/// Feedbin's IDs for the rows it knows, plus the bookkeeping two-way sync needs.
+///
+/// `feeds.feedbin_*` is what Feedbin last said about the subscription (its feed and
+/// subscription IDs, the title, and the tag with its tagging ID), so a sync pushes only the
+/// difference. Folders have no remote identity of their own: Feedbin's tags are flat names on
+/// a feed, so a folder is the tag its feeds carry, written as a `/`-joined path.
+/// `article_state.*_pending` marks a read or star change Feedbin has not been told yet; it is
+/// what makes a local change win over a pull. `feedbin_deleted` is a tombstone for a row that
+/// is gone locally but still exists remotely.
+const FEEDBIN: &str = "
+ALTER TABLE feeds ADD COLUMN feedbin_id INTEGER;
+ALTER TABLE feeds ADD COLUMN feedbin_tagging INTEGER;
+ALTER TABLE feeds ADD COLUMN feedbin_subscription INTEGER;
+ALTER TABLE feeds ADD COLUMN feedbin_title TEXT;
+ALTER TABLE feeds ADD COLUMN feedbin_folder TEXT;
+ALTER TABLE articles ADD COLUMN feedbin_id INTEGER;
+ALTER TABLE article_state ADD COLUMN read_pending INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE article_state ADD COLUMN starred_pending INTEGER NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX feed_feedbin ON feeds(feedbin_id) WHERE feedbin_id IS NOT NULL;
+CREATE UNIQUE INDEX article_feedbin ON articles(feedbin_id) WHERE feedbin_id IS NOT NULL;
+CREATE TABLE feedbin_deleted(
+    kind TEXT NOT NULL,
+    remote_id INTEGER,
+    name TEXT,
+    UNIQUE(kind, remote_id, name)
+);
+CREATE TABLE feedbin_meta(
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    cursor TEXT
+);
+INSERT INTO feedbin_meta(id) VALUES(1);
+";
 
 /// Every existing feed gets its ID as revision; new revisions start above all of them, so a
 /// recreated feed never matches a revision handed out before.

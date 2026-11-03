@@ -19,6 +19,10 @@ pub enum Error {
     /// Input that cannot be stored, such as an empty name or a feed URL that is not HTTP(S).
     #[error("{0}")]
     Validation(String),
+    /// Feedbin refused the request, for a reason worth telling the user apart from a network
+    /// failure: credentials it does not accept, or a page it will not serve.
+    #[error("Feedbin: {0}")]
+    Feedbin(String),
 }
 
 impl Error {
