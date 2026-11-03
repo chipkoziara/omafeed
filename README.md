@@ -150,7 +150,13 @@ The password is kept in `feedbin.toml` next to `settings.toml`, readable only by
 
 Folders follow Feedbin's tags, which are flat names: a folder inside another is the tag `Work/Blogs`, and a tag with a `/` in it becomes nested folders here. A feed has at most one folder. Removing a folder here moves its feeds to the parent rather than deleting anything.
 
-What a sync does not do: it does not read an account's older entries beyond the first five pages when the library is new, and it does not carry an account's read state for articles that were read before the account was set up (the next sync takes Feedbin's state for those).
+The first sync of a new library reads the newest five pages of 100 entries. An account with a longer backlog needs `--pages` once:
+
+```sh
+omafeed sync --pages 80   # the newest 8,000 entries, then only what is new
+```
+
+A sync never rewrites an account's older history: entries outside what it read stay on Feedbin.
 
 ## Command line
 

@@ -10,7 +10,7 @@ pub mod sync;
 
 pub use api::Api;
 pub use credentials::Credentials;
-pub use sync::{Outcome, sync};
+pub use sync::{FIRST_PAGES, Outcome, sync};
 
 use crate::Paths;
 use anyhow::Result;

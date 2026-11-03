@@ -79,6 +79,10 @@ pub enum Command {
     },
     /// Sync with Feedbin now: push this library's changes, then pull the account's
     Sync {
+        /// How much of the account to read the first time, in pages of 100 entries; later
+        /// syncs read only what is new
+        #[arg(long, default_value_t = feedbin::FIRST_PAGES, value_parser = parse_pages)]
+        pages: u32,
         /// Print one line of JSON when done instead of progress text
         #[arg(long)]
         json: bool,
@@ -184,7 +188,7 @@ pub fn run(command: Command) -> Result<()> {
             Command::Import { file } => import(&db, &file).await,
             Command::Export { file } => export(&db, &file).await,
             Command::Refresh { json } => refresh(&db, &paths, settings.refresh_minutes, json).await,
-            Command::Sync { json } => sync(&db, &paths, json).await,
+            Command::Sync { pages, json } => sync(&db, &paths, pages, json).await,
             Command::Feedbin { command } => feedbin_command(&db, &paths, command).await,
             Command::Status => status(&db).await,
             Command::Discover { url, json } => discover(&url, json).await,
@@ -254,7 +258,7 @@ fn synced_line(outcome: &feedbin::Outcome) -> String {
     line
 }
 
-async fn sync(db: &Db, paths: &Paths, json: bool) -> Result<()> {
+async fn sync(db: &Db, paths: &Paths, pages: u32, json: bool) -> Result<()> {
     let Some(api) = feedbin::account(paths)? else {
         bail!("No Feedbin account. Run: omafeed feedbin login --email you@example.com");
     };
@@ -263,7 +267,7 @@ async fn sync(db: &Db, paths: &Paths, json: bool) -> Result<()> {
         // The events are drained so the pass never blocks; the summary says what they mean.
         while rx.recv().await.is_ok() {}
     });
-    let outcome = crate::refresh::sync(db, &api, tx).await?;
+    let outcome = crate::refresh::sync(db, &api, pages, tx).await?;
     logger.await?;
     if json {
         return json::print(&json::Synced::from(outcome));
@@ -484,6 +488,15 @@ fn parse_query(text: &str) -> Result<String, String> {
         return Err("search needs at least one word".into());
     }
     Ok(words)
+}
+
+/// A sync reads at least one page.
+fn parse_pages(text: &str) -> Result<u32, String> {
+    match text.parse() {
+        Ok(0) => Err("must be at least 1".into()),
+        Ok(n) => Ok(n),
+        Err(_) => Err(format!("`{text}` is not a whole number")),
+    }
 }
 
 /// A page size of at least one article.

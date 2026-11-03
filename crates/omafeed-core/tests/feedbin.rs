@@ -409,7 +409,7 @@ async fn a_first_sync_brings_subscriptions_folders_entries_and_state_down() {
     db.set_feedbin(true);
     let api = Api::new(&base, credentials()).unwrap();
 
-    let outcome = sync(&db, &api).await.unwrap();
+    let outcome = sync(&db, &api, 5).await.unwrap();
     assert_eq!(outcome.added, 3, "one feed and two articles");
 
     let lib = db.call(|s| s.library()).await.unwrap();
@@ -457,14 +457,14 @@ async fn a_local_star_is_pushed_and_a_remote_read_change_is_pulled() {
     let db = Db::open(":memory:").unwrap();
     db.set_feedbin(true);
     let api = Api::new(&base, credentials()).unwrap();
-    sync(&db, &api).await.unwrap();
+    sync(&db, &api, 5).await.unwrap();
 
     // A star here reaches Feedbin.
     let article = db.call(|s| s.articles(&all())).await.unwrap()[0].id;
     db.call(move |s| s.set_state(article, StatePatch::starred(true)))
         .await
         .unwrap();
-    sync(&db, &api).await.unwrap();
+    sync(&db, &api, 5).await.unwrap();
     assert_eq!(account.lock().unwrap().starred, vec![1001]);
     assert!(
         account
@@ -478,7 +478,7 @@ async fn a_local_star_is_pushed_and_a_remote_read_change_is_pulled() {
 
     // Reading it on another device reaches this library.
     account.lock().unwrap().unread = vec![];
-    sync(&db, &api).await.unwrap();
+    sync(&db, &api, 5).await.unwrap();
     let read = db.call(move |s| s.article(article)).await.unwrap();
     assert!(read.read, "Feedbin marked it read");
     assert!(read.starred, "the star survives the pull");
@@ -510,7 +510,7 @@ async fn a_field_changed_on_both_sides_keeps_the_local_value() {
     let db = Db::open(":memory:").unwrap();
     db.set_feedbin(true);
     let api = Api::new(&base, credentials()).unwrap();
-    sync(&db, &api).await.unwrap();
+    sync(&db, &api, 5).await.unwrap();
     let article = db.call(|s| s.articles(&all())).await.unwrap()[0].id;
 
     // This library marks it read while Feedbin still has it unread: both sides changed since
@@ -518,7 +518,7 @@ async fn a_field_changed_on_both_sides_keeps_the_local_value() {
     db.call(move |s| s.set_state(article, StatePatch::read(true)))
         .await
         .unwrap();
-    sync(&db, &api).await.unwrap();
+    sync(&db, &api, 5).await.unwrap();
     assert!(account.lock().unwrap().unread.is_empty(), "pushed as read");
     assert!(
         db.call(move |s| s.article(article)).await.unwrap().read,
@@ -553,7 +553,7 @@ async fn a_pending_change_is_never_overwritten_by_a_pull() {
     let db = Db::open(":memory:").unwrap();
     db.set_feedbin(true);
     let api = Api::new(&base, credentials()).unwrap();
-    sync(&db, &api).await.unwrap();
+    sync(&db, &api, 5).await.unwrap();
     let article = db.call(|s| s.articles(&all())).await.unwrap()[0].id;
     assert!(db.call(move |s| s.article(article)).await.unwrap().read);
 
@@ -573,6 +573,42 @@ async fn a_pending_change_is_never_overwritten_by_a_pull() {
         .await
         .unwrap();
     assert!(db.call(move |s| s.article(article)).await.unwrap().read);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_first_sync_reads_as_many_pages_as_it_is_told() {
+    let account = account();
+    {
+        let mut a = account.lock().unwrap();
+        a.subscriptions.push(fake::Sub {
+            id: 11,
+            feed_id: 21,
+            title: "Example".into(),
+            feed_url: "https://example.org/feed".into(),
+            site_url: String::new(),
+        });
+        // 250 entries is two and a half pages of 100.
+        for n in 0..250 {
+            a.entries.push(fake::Entry {
+                id: 2000 + n,
+                feed_id: 21,
+                title: format!("Entry {n}"),
+                url: format!("https://example.org/{n}"),
+                content: "<p>Text</p>".into(),
+                created_at: format!("2026-01-02T03:{:02}:{:02}.000000Z", n / 60, n % 60),
+            });
+        }
+    }
+    let base = fake::serve(account.clone()).await;
+    let db = Db::open(":memory:").unwrap();
+    db.set_feedbin(true);
+    let api = Api::new(&base, credentials()).unwrap();
+
+    let one = sync(&db, &api, 1).await.unwrap();
+    assert_eq!(one.added, 101, "one feed and one page: {one:?}");
+    // The cursor has moved, so more pages are a later sync's business.
+    let again = sync(&db, &api, 5).await.unwrap();
+    assert_eq!(again.added, 0, "nothing new after the cursor: {again:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -606,10 +642,10 @@ async fn a_sync_with_nothing_to_do_writes_nothing() {
     let db = Db::open(":memory:").unwrap();
     db.set_feedbin(true);
     let api = Api::new(&base, credentials()).unwrap();
-    sync(&db, &api).await.unwrap();
+    sync(&db, &api, 5).await.unwrap();
 
     let settled = account.lock().unwrap().requests().len();
-    let outcome = sync(&db, &api).await.unwrap();
+    let outcome = sync(&db, &api, 5).await.unwrap();
     assert_eq!(outcome.writes, 0, "nothing changed, so nothing was written");
     assert_eq!(outcome.pushed, 0, "nothing was sent");
     assert_eq!(outcome.added + outcome.updated + outcome.removed, 0);
@@ -653,11 +689,11 @@ async fn a_feed_deleted_here_is_removed_from_feedbin_once() {
     let db = Db::open(":memory:").unwrap();
     db.set_feedbin(true);
     let api = Api::new(&base, credentials()).unwrap();
-    sync(&db, &api).await.unwrap();
+    sync(&db, &api, 5).await.unwrap();
 
     let feed = db.call(|s| s.library()).await.unwrap().feeds[0].id;
     db.call(move |s| s.delete_feed(feed)).await.unwrap();
-    sync(&db, &api).await.unwrap();
+    sync(&db, &api, 5).await.unwrap();
     assert!(account.lock().unwrap().subscriptions.is_empty(), "removed");
     let removals = account
         .lock()
@@ -668,7 +704,7 @@ async fn a_feed_deleted_here_is_removed_from_feedbin_once() {
         .count();
     assert_eq!(removals, 1);
     // The tombstone is gone, so a third sync sends nothing again.
-    sync(&db, &api).await.unwrap();
+    sync(&db, &api, 5).await.unwrap();
     let removals = account
         .lock()
         .unwrap()
@@ -694,7 +730,7 @@ async fn a_local_subscription_is_created_remotely_and_its_folder_becomes_a_tag()
     .await
     .unwrap();
 
-    sync(&db, &api).await.unwrap();
+    sync(&db, &api, 5).await.unwrap();
     let remote = account.lock().unwrap();
     assert_eq!(remote.subscriptions.len(), 1, "created on Feedbin");
     assert_eq!(

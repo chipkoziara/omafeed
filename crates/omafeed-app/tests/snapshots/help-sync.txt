@@ -6,6 +6,7 @@ Sync with Feedbin now: push this library's changes, then pull the account's
 Usage: omafeed sync [OPTIONS]
 
 Options:
-      --json  Print one line of JSON when done instead of progress text
-  -h, --help  Print help
+      --pages <PAGES>  How much of the account to read the first time, in pages of 100 entries; later syncs read only what is new [default: 5]
+      --json           Print one line of JSON when done instead of progress text
+  -h, --help           Print help
 --- stderr

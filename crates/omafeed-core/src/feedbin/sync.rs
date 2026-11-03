@@ -11,8 +11,9 @@ use crate::{
 };
 use anyhow::Result;
 
-/// How many pages of entries the first sync reads; later syncs read only what is new.
-const FIRST_PAGES: u32 = 5;
+/// How many pages of entries a first sync reads when it is not told; later syncs read only
+/// what is new.
+pub const FIRST_PAGES: u32 = 5;
 /// Entries per page.
 const PER_PAGE: u32 = 100;
 /// The most IDs Feedbin accepts in one read or star request.
@@ -48,8 +49,10 @@ impl Outcome {
     }
 }
 
-/// Push this library's changes, then pull the account's.
-pub async fn sync(db: &Db, api: &Api) -> Result<Outcome> {
+/// Push this library's changes, then pull the account's. `pages` is how much of an account
+/// this library has never seen to read, in pages of 100 entries; a sync that already
+/// has a cursor reads only what is new and ignores it.
+pub async fn sync(db: &Db, api: &Api, pages: u32) -> Result<Outcome> {
     let before = db.call(|s| Ok(s.write_count())).await?;
     let mut outcome = Outcome::default();
     let remote = api.subscriptions().await?;
@@ -65,7 +68,7 @@ pub async fn sync(db: &Db, api: &Api) -> Result<Outcome> {
     let pulled = db.call(move |s| s.feedbin_pull(&remote)).await?;
     outcome.absorb(pulled);
     push_state(db, api, &mut outcome).await?;
-    pull_entries(db, api, &mut outcome).await?;
+    pull_entries(db, api, pages.max(1), &mut outcome).await?;
     pull_state(db, api).await?;
     outcome.writes = db.call(|s| Ok(s.write_count())).await? - before;
     Ok(outcome)
@@ -178,7 +181,7 @@ async fn push_state(db: &Db, api: &Api, outcome: &mut Outcome) -> Result<()> {
 }
 
 /// Read the entries Feedbin has published since the last sync.
-async fn pull_entries(db: &Db, api: &Api, outcome: &mut Outcome) -> Result<()> {
+async fn pull_entries(db: &Db, api: &Api, pages: u32, outcome: &mut Outcome) -> Result<()> {
     let cursor = db.call(|s| s.feedbin_cursor()).await?;
     let first = cursor.is_none();
     let mut page = 1;
@@ -200,7 +203,7 @@ async fn pull_entries(db: &Db, api: &Api, outcome: &mut Outcome) -> Result<()> {
         let remote: Vec<RemoteEntry> = entries.iter().map(|e| remote_entry(e, now)).collect();
         let pulled = db.call(move |s| s.feedbin_entries(&remote, now)).await?;
         outcome.absorb(pulled);
-        if !full || (first && page >= FIRST_PAGES) {
+        if !full || (first && page >= pages) {
             break;
         }
         page += 1;

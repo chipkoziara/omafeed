@@ -22,7 +22,7 @@ pub async fn refresh(
     progress: async_channel::Sender<Progress>,
 ) -> Result<Option<Outcome>> {
     match feedbin::account(&paths)? {
-        Some(api) => Ok(Some(sync(&db, &api, progress).await?)),
+        Some(api) => Ok(Some(sync(&db, &api, feedbin::FIRST_PAGES, progress).await?)),
         None => {
             refresher.refresh(db, which, minutes, progress).await?;
             Ok(None)
@@ -34,11 +34,12 @@ pub async fn refresh(
 pub async fn sync(
     db: &Db,
     api: &Api,
+    pages: u32,
     progress: async_channel::Sender<Progress>,
 ) -> Result<Outcome> {
     db.set_feedbin(true);
     let _ = progress.send(Progress::SyncStarted).await;
-    let result = feedbin::sync(db, api).await;
+    let result = feedbin::sync(db, api, pages).await;
     let error = result.as_ref().err().map(|e| format!("{e:#}"));
     let _ = progress.send(Progress::Synced { error }).await;
     result
