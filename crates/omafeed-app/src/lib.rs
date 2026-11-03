@@ -1,6 +1,7 @@
 //! omafeed, the reader window and the `omafeed` command line. `main.rs` only calls [`main`].
 mod cli;
 mod dialogs;
+mod refresh;
 mod ui;
 
 use anyhow::Result;
@@ -55,6 +56,12 @@ fn run_gui() -> Result<()> {
     let db = Db::open(paths.data.join(DB_FILE))?;
     let settings = Settings::load(&paths);
     db.set_filters(settings.filters.clone());
+    // A configured account makes read and star changes worth pushing.
+    db.set_feedbin(
+        omafeed_core::feedbin::Credentials::load(&paths)
+            .unwrap_or_default()
+            .is_some(),
+    );
     let runtime = Arc::new(tokio::runtime::Runtime::new()?);
     let refresher = Refresher::new()?.with_cache(paths.cache.clone());
     let app = adw::Application::builder().application_id(APP_ID).build();

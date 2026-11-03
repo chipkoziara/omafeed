@@ -1,7 +1,7 @@
 $ omafeed refresh --help
 exit: 0
 --- stdout
-Refresh every feed now
+Refresh every feed now; with a Feedbin account set up, sync with it instead
 
 Usage: omafeed refresh [OPTIONS]
 

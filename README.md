@@ -133,7 +133,24 @@ Click **+** in the header to **Add feed** (Ctrl+N) or create a **New folder** (C
 
 Search looks through the current view, including nested folders. It forgives typos (`agentc` finds `agentic`), treats regular plural and singular forms alike (`box` and `boxes`, `story` and `stories`), and matches the start of the last word you type, so results appear as you go. Words shorter than five letters are not typo-corrected; the last word can match prefixes from three letters onward. Numbers are matched exactly, and a word that appears in your articles is never swapped for a similar one. Summary-only feeds show the summary; open the original for the rest. Podcast episodes appear as download links.
 
-Not yet supported: full-article extraction, podcast playback, sync between devices, and notifications.
+Not yet supported: full-article extraction, podcast playback, and notifications.
+
+## Feedbin
+
+Omafeed can sync with a [Feedbin](https://feedbin.com) account instead of fetching feeds itself. With an account set up, Feedbin holds the subscriptions and the articles, and Omafeed pushes the read and starred changes it has not been told about yet:
+
+```sh
+omafeed feedbin login --email you@example.com   # asks for the password
+omafeed sync
+```
+
+`sync` is two-way. It sends this library's read, star, subscribe and unsubscribe changes first, then takes Feedbin's subscriptions, tags, entries, unread and starred state. A read or star change made here and not yet sent wins over the account's own value; everything else follows Feedbin. `omafeed refresh` and the window's scheduled refresh run the same sync while an account is set up, so nothing is fetched twice, and a sync with nothing to do writes nothing.
+
+The password is kept in `feedbin.toml` next to `settings.toml`, readable only by its owner. `omafeed feedbin logout` forgets it and leaves the library as it is. `omafeed feedbin status` says what is waiting to be pushed.
+
+Folders follow Feedbin's tags, which are flat names: a folder inside another is the tag `Work/Blogs`, and a tag with a `/` in it becomes nested folders here. A feed has at most one folder. Removing a folder here moves its feeds to the parent rather than deleting anything.
+
+What a sync does not do: it does not read an account's older entries beyond the first five pages when the library is new, and it does not carry an account's read state for articles that were read before the account was set up (the next sync takes Feedbin's state for those).
 
 ## Command line
 
@@ -142,7 +159,11 @@ Not yet supported: full-article extraction, podcast playback, sync between devic
 | Command | What it does |
 | --- | --- |
 | `import FILE` / `export FILE` | Import or export subscriptions as OPML |
-| `refresh` | Fetch every feed now |
+| `refresh` | Fetch every feed now; with a Feedbin account, sync with it instead |
+| `sync` | Sync with Feedbin now: push this library's changes, then pull the account's |
+| `feedbin login --email EMAIL` | Save the account, checking it first; the password comes from stdin |
+| `feedbin logout` | Forget the account, leaving the library as it is |
+| `feedbin status` | The account, and what is waiting to be pushed |
 | `status` | One line of totals, then any feed errors |
 | `discover URL` | List the feeds a website advertises |
 | `feeds` | Folders, feeds, unread counts and feed errors |

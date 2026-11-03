@@ -1,0 +1,5 @@
+$ omafeed sync
+exit: 1
+--- stdout
+--- stderr
+omafeed: No Feedbin account. Run: omafeed feedbin login --email you@example.com

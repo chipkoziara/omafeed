@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use omafeed_core::{
     Db, Error, Paths, Settings,
     content::{one_line, readable},
+    feedbin::{self, Credentials},
     ingest::{Progress, Refresher},
     model::{ArticleId, FeedId, FolderId, Library, ParseScopeError, Query, Scope, StatePatch},
     reading,
@@ -45,17 +46,47 @@ pub struct List {
     json: bool,
 }
 
+/// What to do with the Feedbin account.
+#[derive(clap::Subcommand)]
+pub enum FeedbinCommand {
+    /// Save the account, checking the credentials first; the password is read from stdin
+    Login {
+        /// The account's email address
+        #[arg(long)]
+        email: String,
+    },
+    /// Forget the account, leaving the library as it is
+    Logout,
+    /// Show the account and what is waiting to be pushed
+    Status {
+        /// Print JSON instead of text
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(clap::Subcommand)]
 pub enum Command {
     /// Import subscriptions from an OPML file
     Import { file: PathBuf },
     /// Export subscriptions to an OPML file
     Export { file: PathBuf },
-    /// Refresh every feed now
+    /// Refresh every feed now; with a Feedbin account set up, sync with it instead
     Refresh {
         /// Print one line of JSON when done instead of progress text
         #[arg(long)]
         json: bool,
+    },
+    /// Sync with Feedbin now: push this library's changes, then pull the account's
+    Sync {
+        /// Print one line of JSON when done instead of progress text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manage the Feedbin account
+    Feedbin {
+        #[command(subcommand)]
+        command: FeedbinCommand,
     },
     /// Show library totals and feed errors
     Status,
@@ -144,12 +175,17 @@ pub fn run(command: Command) -> Result<()> {
     let db = Db::open(paths.data.join(DB_FILE))?;
     let settings = Settings::load(&paths);
     db.set_filters(settings.filters);
+    // A configured account makes read and star changes worth pushing; an unreadable
+    // feedbin.toml is reported rather than silently ignored.
+    db.set_feedbin(Credentials::load(&paths)?.is_some());
     let runtime = tokio::runtime::Runtime::new()?;
     runtime.block_on(async {
         match command {
             Command::Import { file } => import(&db, &file).await,
             Command::Export { file } => export(&db, &file).await,
             Command::Refresh { json } => refresh(&db, &paths, settings.refresh_minutes, json).await,
+            Command::Sync { json } => sync(&db, &paths, json).await,
+            Command::Feedbin { command } => feedbin_command(&db, &paths, command).await,
             Command::Status => status(&db).await,
             Command::Discover { url, json } => discover(&url, json).await,
             Command::Feeds { json } => feeds(&db, json).await,
@@ -203,6 +239,155 @@ async fn export(db: &Db, file: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// One line summing up a sync, for `sync` and a linked `refresh`.
+fn synced_line(outcome: &feedbin::Outcome) -> String {
+    let mut line = format!(
+        "Synced: {} added, {} updated, {} removed, {} pushed, {} rows written",
+        outcome.added, outcome.updated, outcome.removed, outcome.pushed, outcome.writes
+    );
+    if outcome.skipped > 0 {
+        line.push_str(&format!(", {} subscriptions unsupported", outcome.skipped));
+    }
+    if outcome.rejected > 0 {
+        line.push_str(&format!(", {} changes rejected", outcome.rejected));
+    }
+    line
+}
+
+async fn sync(db: &Db, paths: &Paths, json: bool) -> Result<()> {
+    let Some(api) = feedbin::account(paths)? else {
+        bail!("No Feedbin account. Run: omafeed feedbin login --email you@example.com");
+    };
+    let (tx, rx) = async_channel::unbounded();
+    let logger = tokio::spawn(async move {
+        // The events are drained so the pass never blocks; the summary says what they mean.
+        while rx.recv().await.is_ok() {}
+    });
+    let outcome = crate::refresh::sync(db, &api, tx).await?;
+    logger.await?;
+    if json {
+        return json::print(&json::Synced::from(outcome));
+    }
+    println!("{}", synced_line(&outcome));
+    Ok(())
+}
+
+async fn feedbin_command(db: &Db, paths: &Paths, command: FeedbinCommand) -> Result<()> {
+    match command {
+        FeedbinCommand::Login { email } => login(paths, &email).await,
+        FeedbinCommand::Logout => {
+            Credentials::remove(paths)?;
+            db.set_feedbin(false);
+            println!("Forgot the Feedbin account. The library is unchanged.");
+            Ok(())
+        }
+        FeedbinCommand::Status { json } => feedbin_status(paths, db, json).await,
+    }
+}
+
+async fn login(paths: &Paths, email: &str) -> Result<()> {
+    let credentials = Credentials {
+        email: email.trim().to_owned(),
+        password: read_password()?,
+    };
+    if credentials.email.is_empty() || credentials.password.is_empty() {
+        bail!("An email and a password are both needed");
+    }
+    let api = feedbin::Api::new(feedbin::api::API, credentials.clone())?;
+    api.authentication().await?;
+    let subscriptions = api.subscriptions().await?.len();
+    credentials.save(paths)?;
+    println!(
+        "Feedbin accepted {} ({} subscriptions). Run `omafeed sync` to bring them in.",
+        credentials.email, subscriptions
+    );
+    Ok(())
+}
+
+async fn feedbin_status(paths: &Paths, db: &Db, json: bool) -> Result<()> {
+    let Some(credentials) = Credentials::load(paths)? else {
+        if json {
+            return json::print(&json::Account {
+                email: None,
+                status: Default::default(),
+            });
+        }
+        println!("No Feedbin account. Run: omafeed feedbin login --email you@example.com");
+        return Ok(());
+    };
+    let status = db.call(|s| s.feedbin_status()).await?;
+    if json {
+        return json::print(&json::Account {
+            email: Some(credentials.email),
+            status,
+        });
+    }
+    println!(
+        "{}: {} subscriptions, {} unsynced, {} pending changes, {} deletions",
+        credentials.email, status.linked, status.unlinked, status.pending, status.deletions
+    );
+    match &status.cursor {
+        Some(cursor) => println!("Entries read after {cursor}"),
+        None => println!("Entries not read yet"),
+    }
+    Ok(())
+}
+
+/// The password, read without echoing it when it is typed at a terminal.
+fn read_password() -> Result<String> {
+    use std::io::{BufRead, IsTerminal, Write};
+    let stdin = std::io::stdin();
+    let terminal = stdin.is_terminal();
+    if terminal {
+        eprint!("Feedbin password: ");
+        std::io::stderr().flush()?;
+    }
+    let quiet = terminal.then(EchoOff::new).transpose()?;
+    let mut line = String::new();
+    stdin.lock().read_line(&mut line)?;
+    drop(quiet);
+    if terminal {
+        eprintln!();
+    }
+    Ok(line.trim_end_matches(['\r', '\n']).to_owned())
+}
+
+/// The terminal's echo, off until this is dropped, so a typed secret does not show.
+struct EchoOff {
+    original: libc::termios,
+}
+
+impl EchoOff {
+    fn new() -> Result<Self> {
+        // SAFETY: tcgetattr fills the termios it is given, and tcsetattr only writes one this
+        // process owns; both take a file descriptor the standard input already provides.
+        #[allow(unsafe_code)]
+        unsafe {
+            let mut original = std::mem::MaybeUninit::<libc::termios>::uninit();
+            if libc::tcgetattr(libc::STDIN_FILENO, original.as_mut_ptr()) != 0 {
+                bail!("Could not read the terminal's settings");
+            }
+            let original = original.assume_init();
+            let mut quiet = original;
+            quiet.c_lflag &= !libc::ECHO;
+            if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &quiet) != 0 {
+                bail!("Could not turn the terminal's echo off");
+            }
+            Ok(Self { original })
+        }
+    }
+}
+
+impl Drop for EchoOff {
+    fn drop(&mut self) {
+        // SAFETY: restores the settings this process read before it changed them.
+        #[allow(unsafe_code)]
+        unsafe {
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &self.original);
+        }
+    }
+}
+
 async fn refresh(db: &Db, paths: &Paths, minutes: u32, json: bool) -> Result<()> {
     let (tx, rx) = async_channel::unbounded();
     let logger = tokio::spawn(async move {
@@ -236,18 +421,30 @@ async fn refresh(db: &Db, paths: &Paths, minutes: u32, json: bool) -> Result<()>
         }
         (feeds, totals)
     });
-    Refresher::new()?
-        .with_cache(paths.cache.clone())
-        .refresh(db.clone(), omafeed_core::ingest::Which::All, minutes, tx)
-        .await?;
+    let outcome = crate::refresh::refresh(
+        db.clone(),
+        paths.clone(),
+        Refresher::new()?.with_cache(paths.cache.clone()),
+        omafeed_core::ingest::Which::All,
+        minutes,
+        tx,
+    )
+    .await?;
     let (feeds, totals) = logger.await?;
     if json {
+        if let Some(outcome) = outcome {
+            return json::print(&json::Synced::from(outcome));
+        }
         let (total, failed) = totals.unwrap_or_default();
         json::print(&json::Refresh {
             total,
             failed,
             feeds,
         })?;
+        return Ok(());
+    }
+    if let Some(outcome) = outcome {
+        println!("{}", synced_line(&outcome));
     }
     Ok(())
 }

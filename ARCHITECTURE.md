@@ -16,7 +16,7 @@ Run without a command, `omafeed` opens the reader window; with a command (`omafe
 | --- | --- |
 | `model` | The data types shared by everything else: the row IDs `FolderId`, `FeedId` and `ArticleId` (each an `i64` that serializes, prints and parses as the number), `Folder`, `Feed`, `Article`, `Library` (with lookups and a folder tree walk), `Scope` (written and read as `unread`, `feed:12`, …), `Query`, `StatePatch` (a read and/or star change), `ImportReport`, and a feed download on its way into storage (`Download`, `Update`, `Entry`). |
 | `error` | `Error`, the failures callers handle themselves: an article or feed that does not exist, a duplicate feed URL, a database from a newer version, and invalid input. Everything else is an `anyhow::Error` with context. |
-| `store` | `Store` (one SQLite connection) and `Db` (a handle to the database worker thread). `schema` holds the migrations; `folders`, `feeds` (library listing, subscriptions, refresh results, OPML import/export), `articles` (listing and read/star state) and `search` (query predicates) each add their methods to `Store`; `worker` is the thread. |
+| `store` | `Store` (one SQLite connection) and `Db` (a handle to the database worker thread). `schema` holds the migrations; `folders`, `feeds` (library listing, subscriptions, refresh results, OPML import/export), `articles` (listing and read/star state), `feedbin` (Feedbin's IDs for each row, the changes it has not been told about, and the tombstones of what it still has) and `search` (query predicates) each add their methods to `Store`; `worker` is the thread. |
 | `fuzzy` | Forgiving search: turns typed words into an FTS5 query using the index's own vocabulary (typos, plurals, prefix of the last word). Private to the crate. |
 | `subscriptions` | What the command line and the window both do with feeds: subscribe, update, unsubscribe (reporting exactly what it deletes), and the title of an existing subscription for a duplicate. Choosing among discovered candidates stays with the caller: the window asks, the command line takes the first. |
 | `filters` | `ContentFilters`: the words and `/regexes/` that hide articles, matched against title and preview, and `validate` for a new pattern. |
@@ -25,6 +25,7 @@ Run without a command, `omafeed` opens the reader window; with a command (`omafe
 | `content` | Article HTML: `sanitize`, plain text for previews and search (`plain`), and Markdown-like reading text for the command line (`readable`). |
 | `render` | The reader's HTML document (`document`). |
 | `opml` | OPML parsing and export. |
+| `feedbin` | Syncing with a [Feedbin](https://feedbin.com) account. `credentials` holds `feedbin.toml` (owner-readable only); `api` is the part of Feedbin's HTTP API a sync uses, with its answers the user can act on turned into [`Error::Feedbin`]; `sync` pushes first (subscriptions and tags created or changed, deletions, read and star changes) and pulls second (subscriptions, entries, unread and starred sets), which is what makes an unsent local change win over the account's value. |
 | `config` | `Paths` (XDG or `OMAFEED_HOME`), `Settings` (`settings.toml`) and `Theme`, and `Palette` (including the Omarchy `colors.toml` reader). |
 | `http` | The shared `reqwest` client, its redirect policy, and size-limited body reads. Private to the crate. |
 | `util` | URL validation, HTML escaping, SHA-256 hex, local-host detection. Private to the crate. |
@@ -34,6 +35,7 @@ Run without a command, `omafeed` opens the reader window; with a command (`omafe
 | Module | Contents |
 | --- | --- |
 | `lib` | Argument parsing (`main`), which dispatches to `cli::run` or builds the GTK application. `main.rs` only calls it. With the `test-support` feature, `test_support` exposes the desktop smoke test to `tests/desktop_smoke.rs`. |
+| `refresh` | Which of the two ways a refresh works — one Feedbin sync when an account is configured, one direct pass over the feeds otherwise — reported through the same `Progress` events either way. |
 | `cli` | Every command: argument definitions and text output. `cli/json.rs` has one `Serialize` type per `--json` shape, printed through `serde_json::Value` so the keys stay sorted, byte for byte as before. |
 | `ui` | The main window. `Ui` coordinates: it owns the panes (`Header`, `SidebarPane`, `ListPane`, `ReaderPane`), each holding its own widgets, and a `View` (`view.rs`) with what is shown: view and page, the articles on it, the open article, collapsed folders, and the read/star changes (`changes.rs`) and undo in flight. `View` has no GTK and decides what each late database result may change, and what a removed feed or folder takes with it; it is unit-tested on its own. `articles`, `sidebar`, `reader`, `keys` and `theme` add methods to `Ui`. `sidebar` and `articles` also build the context menus of sidebar entries and articles: which commands a row has and which apply now are pure functions, unit-tested; `context_menu` opens either menu on a right click or the Menu key and fills its one `gtk::PopoverMenu` from a `gio::Menu` with a fresh action group (`sidebar.`, `article.`) each time. The sidebar's menu is closed with its actions dropped whenever the library is read again (an entry's ID may since belong to another feed or folder), the article menu whenever the list is; the sidebar's commands open the feed and folder forms and confirmations (`dialogs::add_feed`, `dialogs::new_folder`, `dialogs::edit`, `dialogs::remove`). Feeds and folders move by drag and drop: each row is a drag source carrying its `Scope` as text, the list is the drop target, and where a drop lands is another pure function (`destination`), unit-tested; `widgets` has small constructors; `tests` holds the desktop smoke test (only with `test-support`). |
 | `dialogs` | Feed and folder forms (a reusable `Form`: an `adw::Dialog` with a title, labeled fields styled in `style.css`, and its actions at the bottom; it stays open across attempts to show errors), OPML import/export, content filters, settings, shortcuts and about. |
@@ -120,6 +122,27 @@ syntax error resets every setting to its default, with a warning on stderr.
 
 Icons are cached as PNGs under `icons-v2/` in the cache directory, named by the SHA-256 of
 the website's origin.
+
+## Feedbin sync
+
+`omafeed-core/src/feedbin`, and the `store::feedbin` methods it calls. With an account configured
+(`feedbin.toml` in the config directory) `Db::set_feedbin(true)` makes every read and star change
+mark its field pending, and a deleted feed leave a tombstone with its subscription ID.
+
+One sync pushes, then pulls. Pushing first is what settles a field changed on both sides: the
+local value reaches Feedbin before the pull reads the account's state, and a field whose change
+was not pushed (because the request failed) is skipped by `feedbin_apply_state`, so a pull never
+overwrites it. The pull takes Feedbin's subscriptions (matching a local feed by subscription ID,
+then by URL), its tags as folder paths, the entries published since the cursor (the newest
+`created_at` a pull read), and the unread and starred sets. Every write is conditional on a value
+differing, so a sync with nothing to do writes no rows; `Outcome::writes` is SQLite's own change
+counter around the pass, which is what the tests and the real run check.
+
+Feedbin's tags are flat per feed, so a folder is the tag its feeds carry, written `Work/Blogs`,
+and a feed has at most one tag. Folders therefore have no remote identity, and renaming a folder
+costs one tagging create and one delete per feed in it. Subscriptions are reconciled as a union:
+a local feed Feedbin does not have is created there, a Feedbin subscription this library does not
+have is created here, and one Feedbin no longer has is removed here (with its articles).
 
 ## Known semantics and limits
 

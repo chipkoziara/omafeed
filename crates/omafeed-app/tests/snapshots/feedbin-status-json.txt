@@ -1,0 +1,5 @@
+$ omafeed feedbin status --json
+exit: 0
+--- stdout
+{"cursor":null,"deletions":0,"email":null,"linked":0,"pending":0,"unlinked":0}
+--- stderr

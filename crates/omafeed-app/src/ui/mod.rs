@@ -515,6 +515,32 @@ impl Ui {
                 }
             }
             Progress::Feed { done, total, .. } => self.show_refreshing(done, total),
+            Progress::SyncStarted => {
+                self.busy.set(true);
+                let refresh = &self.header.refresh;
+                if !refresh.child().is_some_and(|c| c.is::<adw::Spinner>()) {
+                    refresh.set_child(Some(&adw::Spinner::new()));
+                }
+                refresh.set_tooltip_text(Some(&format!("Syncing with Feedbin…\n{REFRESH_TIP}")));
+                self.refresh_line.set_pulse_step(0.1);
+                self.refresh_line.pulse();
+                self.refresh_line.set_visible(true);
+            }
+            Progress::Synced { error } => {
+                self.refresh_stopped();
+                let tip = match &error {
+                    Some(e) => format!("Feedbin: {e}"),
+                    None => "Synced with Feedbin".into(),
+                };
+                self.header
+                    .refresh
+                    .set_tooltip_text(Some(&format!("{tip}\n{REFRESH_TIP}")));
+                if error.is_none() {
+                    // Pick up entries the sync added and newly downloaded favicons.
+                    self.favicons.borrow_mut().clear();
+                    self.reload();
+                }
+            }
             Progress::Finished { total, failed } => {
                 self.refresh_stopped();
                 let refresh = &self.header.refresh;
@@ -848,9 +874,12 @@ impl Ui {
         let refresher = self.refresher.clone();
         let minutes = self.settings.borrow().refresh_minutes;
         let tx = self.progress.clone();
+        let paths = self.paths.clone();
         let (err_tx, err_rx) = async_channel::bounded(1);
         self.runtime.spawn(async move {
-            if let Err(e) = refresher.refresh(db, which, minutes, tx).await {
+            // One Feedbin sync when an account is configured, one pass over the feeds otherwise.
+            if let Err(e) = crate::refresh::refresh(db, paths, refresher, which, minutes, tx).await
+            {
                 let _ = err_tx.send(e.to_string()).await;
             }
         });

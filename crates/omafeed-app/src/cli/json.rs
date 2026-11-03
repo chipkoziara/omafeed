@@ -36,6 +36,41 @@ pub struct Refreshed {
     pub error: Option<String>,
 }
 
+/// `sync --json`, and `refresh --json` of an account: what one sync did.
+#[derive(Serialize)]
+pub struct Synced {
+    pub added: usize,
+    pub updated: usize,
+    pub removed: usize,
+    pub pushed: usize,
+    pub skipped: usize,
+    pub rejected: usize,
+    pub writes: u64,
+}
+
+impl From<omafeed_core::feedbin::Outcome> for Synced {
+    fn from(o: omafeed_core::feedbin::Outcome) -> Self {
+        Self {
+            added: o.added,
+            updated: o.updated,
+            removed: o.removed,
+            pushed: o.pushed,
+            skipped: o.skipped,
+            rejected: o.rejected,
+            writes: o.writes,
+        }
+    }
+}
+
+/// `feedbin status --json`.
+#[derive(Serialize)]
+pub struct Account {
+    /// The account's email, or `None` when no account is configured.
+    pub email: Option<String>,
+    #[serde(flatten)]
+    pub status: omafeed_core::store::feedbin::Status,
+}
+
 /// A feed found by discovery: `discover --json` and `other_feeds_found`.
 #[derive(Serialize)]
 pub struct Found {

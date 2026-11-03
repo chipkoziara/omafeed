@@ -1,0 +1,16 @@
+$ omafeed feedbin --help
+exit: 0
+--- stdout
+Manage the Feedbin account
+
+Usage: omafeed feedbin <COMMAND>
+
+Commands:
+  login   Save the account, checking the credentials first; the password is read from stdin
+  logout  Forget the account, leaving the library as it is
+  status  Show the account and what is waiting to be pushed
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+--- stderr

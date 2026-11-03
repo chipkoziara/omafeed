@@ -1,0 +1,11 @@
+$ omafeed sync --help
+exit: 0
+--- stdout
+Sync with Feedbin now: push this library's changes, then pull the account's
+
+Usage: omafeed sync [OPTIONS]
+
+Options:
+      --json  Print one line of JSON when done instead of progress text
+  -h, --help  Print help
+--- stderr

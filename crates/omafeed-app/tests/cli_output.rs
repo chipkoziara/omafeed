@@ -425,6 +425,20 @@ fn errors_print_exactly_the_same_bytes_and_exit_codes() {
 }
 
 #[test]
+fn the_feedbin_commands_say_when_no_account_is_configured() {
+    let cli = Cli::new();
+    cli.check("sync-without-account", &["sync"]);
+    cli.check("feedbin-status", &["feedbin", "status"]);
+    cli.check("feedbin-status-json", &["feedbin", "status", "--json"]);
+    cli.check("feedbin-logout", &["feedbin", "logout"]);
+    // No password on standard input, so this stops before reaching Feedbin.
+    cli.check(
+        "feedbin-login-without-password",
+        &["feedbin", "login", "--email", "me@example.com"],
+    );
+}
+
+#[test]
 fn help_and_version_print_exactly_the_same_bytes() {
     let cli = Cli::new();
     cli.check("help", &["--help"]);
@@ -447,9 +461,17 @@ fn help_and_version_print_exactly_the_same_bytes() {
         "unstar",
         "subscribe",
         "unsubscribe",
+        "sync",
+        "feedbin",
         "help",
     ] {
         cli.check(&format!("help-{command}"), &[command, "--help"]);
+    }
+    for command in ["login", "logout", "status"] {
+        cli.check(
+            &format!("help-feedbin-{command}"),
+            &["feedbin", command, "--help"],
+        );
     }
     cli.check("help-search-short", &["search", "-h"]);
     cli.check("help-help-articles", &["help", "articles"]);

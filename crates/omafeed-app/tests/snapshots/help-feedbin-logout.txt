@@ -1,0 +1,10 @@
+$ omafeed feedbin logout --help
+exit: 0
+--- stdout
+Forget the account, leaving the library as it is
+
+Usage: omafeed feedbin logout
+
+Options:
+  -h, --help  Print help
+--- stderr

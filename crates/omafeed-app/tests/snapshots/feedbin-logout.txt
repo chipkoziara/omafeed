@@ -1,0 +1,5 @@
+$ omafeed feedbin logout
+exit: 0
+--- stdout
+Forgot the Feedbin account. The library is unchanged.
+--- stderr

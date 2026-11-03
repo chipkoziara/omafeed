@@ -9,7 +9,9 @@ Usage: omafeed [COMMAND]
 Commands:
   import       Import subscriptions from an OPML file
   export       Export subscriptions to an OPML file
-  refresh      Refresh every feed now
+  refresh      Refresh every feed now; with a Feedbin account set up, sync with it instead
+  sync         Sync with Feedbin now: push this library's changes, then pull the account's
+  feedbin      Manage the Feedbin account
   status       Show library totals and feed errors
   discover     List the feeds a website advertises
   feeds        List folders, feeds, unread counts and feed errors

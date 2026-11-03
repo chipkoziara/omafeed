@@ -76,6 +76,13 @@ pub enum Progress {
         /// Feeds that failed.
         failed: usize,
     },
+    /// A Feedbin sync began in place of a pass over the feeds.
+    SyncStarted,
+    /// The Feedbin sync ended; `error` is why it failed, if it did.
+    Synced {
+        /// Why it failed, or `None`.
+        error: Option<String>,
+    },
 }
 
 /// Refreshes feeds and finds them. Cheap to clone; clones share one HTTP client and allow

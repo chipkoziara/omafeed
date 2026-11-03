@@ -1,0 +1,11 @@
+$ omafeed feedbin login --help
+exit: 0
+--- stdout
+Save the account, checking the credentials first; the password is read from stdin
+
+Usage: omafeed feedbin login --email <EMAIL>
+
+Options:
+      --email <EMAIL>  The account's email address
+  -h, --help           Print help
+--- stderr

@@ -1,0 +1,11 @@
+$ omafeed feedbin status --help
+exit: 0
+--- stdout
+Show the account and what is waiting to be pushed
+
+Usage: omafeed feedbin status [OPTIONS]
+
+Options:
+      --json  Print JSON instead of text
+  -h, --help  Print help
+--- stderr
