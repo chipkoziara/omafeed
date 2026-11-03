@@ -20,6 +20,13 @@ use url::Url;
 /// Feedbin's API address.
 pub const API: &str = "https://api.feedbin.com/";
 
+/// The API's address: [`API`], or `OMAFEED_FEEDBIN_API` when it is set. The override exists so
+/// a test can answer every request from its own server, and so a Feedbin-compatible proxy can
+/// be used instead.
+pub fn base() -> String {
+    std::env::var("OMAFEED_FEEDBIN_API").unwrap_or_else(|_| API.to_owned())
+}
+
 /// An entry as Feedbin sends it; any field but the IDs can be null.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Entry {

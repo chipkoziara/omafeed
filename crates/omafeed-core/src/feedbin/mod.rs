@@ -18,7 +18,7 @@ use anyhow::Result;
 /// The configured account, or `None` when there is none.
 pub fn account(paths: &Paths) -> Result<Option<Api>> {
     match Credentials::load(paths)? {
-        Some(credentials) => Ok(Some(Api::new(api::API, credentials)?)),
+        Some(credentials) => Ok(Some(Api::new(&api::base(), credentials)?)),
         None => Ok(None),
     }
 }

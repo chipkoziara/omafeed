@@ -293,7 +293,7 @@ async fn login(paths: &Paths, email: &str) -> Result<()> {
     if credentials.email.is_empty() || credentials.password.is_empty() {
         bail!("An email and a password are both needed");
     }
-    let api = feedbin::Api::new(feedbin::api::API, credentials.clone())?;
+    let api = feedbin::Api::new(&feedbin::api::base(), credentials.clone())?;
     api.authentication().await?;
     let subscriptions = api.subscriptions().await?.len();
     credentials.save(paths)?;
