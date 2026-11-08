@@ -168,6 +168,10 @@ These are properties of the current design, not promises. Change them deliberate
   against in-memory databases and local HTTP servers.
 - `crates/omafeed-core/tests/stale_refresh.rs`: refresh results that arrive after their feed
   was edited, removed or replaced.
+- `crates/omafeed-core/tests/feedbin.rs`: a two-way Feedbin sync against a local server that
+  answers like the account's API: a first sync, pushes and pulls, a field changed on both
+  sides, a pending change a pull must not overwrite, `--pages`, a sync with nothing to do, a
+  deletion sent once, and a local subscription created remotely with its folder as a tag.
 - Unit tests next to the code, notably `ingest/schedule.rs` (when feeds are due), `http.rs`
   and `util.rs` (the network policy), and the app's `ui/view.rs` and `ui/changes.rs` (what late
   database results may change on screen) and `ui/sidebar.rs` and `ui/articles.rs` (the context menus' commands).
@@ -175,6 +179,10 @@ These are properties of the current design, not promises. Change them deliberate
   settings files, which must keep opening (`tests/fixtures/`).
 - `crates/omafeed-core/tests/fuzzy_speed.rs`: ignored search benchmarks.
 - `crates/omafeed-app/tests/cli.rs`: command behaviour, run against the real binary.
+- `crates/omafeed-app/tests/cli_feedbin.rs`: the same kind of account, reached through the real
+  binary: a change made in Feedbin arrives while a local star reaches it, a field changed on
+  both sides keeps the local value, a sync with nothing to do writes nothing, and status says
+  what the account holds while logout forgets it.
 - `crates/omafeed-app/tests/cli_output.rs`: byte-for-byte transcripts of command output,
   stderr, exit codes and help (`tests/snapshots/`). Rewrite them with `OMAFEED_BLESS=1` only
   for an intended change.
