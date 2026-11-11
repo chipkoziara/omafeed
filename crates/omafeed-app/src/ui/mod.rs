@@ -115,8 +115,23 @@ impl Header {
 struct SidebarPane {
     root: gtk::Box,
     list: gtk::ListBox,
+    /// Its scrolled window's vertical adjustment; a rebuild restores its value.
+    adjustment: gtk::Adjustment,
     /// The context menu of feeds, folders and views, filled in each time it opens.
     menu: gtk::PopoverMenu,
+}
+/// The sidebar rows last shown, in order: which scope, how deep, which folder is
+/// collapsed, and whether its feed has an error. When a rebuild shows these again, its
+/// scroll position survives.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct SidebarShown(Vec<SidebarRowShown>);
+/// One sidebar row of [`SidebarShown`].
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct SidebarRowShown {
+    pub scope: Scope,
+    pub depth: i32,
+    pub collapsed: bool,
+    pub has_error: bool,
 }
 
 impl SidebarPane {
@@ -127,12 +142,31 @@ impl SidebarPane {
         let list = gtk::ListBox::new();
         list.set_margin_top(8);
         list.add_css_class("navigation-sidebar");
-        root.append(&scroll(&list));
+        let scrolled = scroll(&list);
+        let adjustment = scrolled.vadjustment();
+        root.append(&scrolled);
         let menu = context_menu::popover(&root);
-        Self { root, list, menu }
+        Self {
+            root,
+            list,
+            adjustment,
+            menu,
+        }
     }
 }
 
+/// The articles last shown in the list: which view, page and filters, and in what order.
+pub(crate) struct ListShown {
+    /// Which articles.
+    scope: Scope,
+    search: String,
+    exact: bool,
+    unread_only: bool,
+    /// Which page of them.
+    offset: usize,
+    /// Their ids, top to bottom.
+    ids: Vec<omafeed_core::model::ArticleId>,
+}
 struct ListPane {
     root: gtk::Box,
     heading: gtk::Label,
@@ -140,6 +174,9 @@ struct ListPane {
     unread: gtk::ToggleButton,
     mark: gtk::Button,
     list: gtk::ListBox,
+    /// Its scrolled window's vertical adjustment, whose value [`ListShown`] preserves
+    /// across a reload.
+    adjustment: gtk::Adjustment,
     /// The context menu of articles, filled in each time it opens.
     menu: gtk::PopoverMenu,
     /// The article the menu was last opened on.
@@ -185,7 +222,9 @@ impl ListPane {
         let list = gtk::ListBox::new();
         list.add_css_class("articles");
         list.set_activate_on_single_click(true);
-        root.append(&scroll(&list));
+        let scrolled = scroll(&list);
+        let adjustment = scrolled.vadjustment();
+        root.append(&scrolled);
         let menu = context_menu::popover(&root);
         Self {
             root,
@@ -194,6 +233,7 @@ impl ListPane {
             unread,
             mark,
             list,
+            adjustment,
             menu,
             menu_article: Cell::default(),
             pages,
@@ -233,6 +273,14 @@ pub struct Ui {
     side: SidebarPane,
     list: ListPane,
     reader: reader::ReaderPane,
+    /// What the list pane is scrolled to.
+    pub(crate) list_scroll: RefCell<f64>,
+    /// The ids, view, and filters last shown in the article list.
+    pub(crate) list_shown: RefCell<Option<ListShown>>,
+    /// What the sidebar is scrolled to.
+    pub(crate) side_scroll: RefCell<f64>,
+    /// The rows last shown in the sidebar.
+    pub(crate) side_shown: RefCell<Option<SidebarShown>>,
     inner: gtk::Paned,
     outer: gtk::Paned,
     /// The line along the top of the panes showing how far a refresh got.
@@ -349,6 +397,10 @@ impl Ui {
             palette: RefCell::new(palette),
             article_rows: RefCell::default(),
             sidebar_rows: RefCell::default(),
+            list_scroll: RefCell::new(0.0),
+            list_shown: RefCell::new(None),
+            side_scroll: RefCell::new(0.0),
+            side_shown: RefCell::new(None),
             favicons: RefCell::default(),
             dragging: RefCell::default(),
             rebuilding: Cell::new(false),
@@ -486,6 +538,21 @@ impl Ui {
             #[weak(rename_to = u)]
             self,
             move |_| u.mark_all()
+        ));
+        // Remember where the list and sidebar are scrolled, so a reload can put them back.
+        self.list.adjustment.connect_value_changed(clone!(
+            #[weak(rename_to = u)]
+            self,
+            move |a| {
+                *u.list_scroll.borrow_mut() = a.value();
+            }
+        ));
+        self.side.adjustment.connect_value_changed(clone!(
+            #[weak(rename_to = u)]
+            self,
+            move |a| {
+                *u.side_scroll.borrow_mut() = a.value();
+            }
         ));
         self.connect_reader_signals();
         self.connect_sidebar_menu();

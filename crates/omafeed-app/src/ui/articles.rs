@@ -308,6 +308,31 @@ impl Ui {
             .view
             .borrow_mut()
             .receive_page(request, articles, remembered);
+        // The scroll survives a reload only when the list does not: same view, page,
+        // filters and articles. While it is empty GTK clamps it to 0, so restore it
+        // once the new rows are laid out, not here.
+        let ids: Vec<ArticleId> = self.view.borrow().articles().iter().map(|a| a.id).collect();
+        let filters = self.settings.borrow().filters.clone();
+        let restored = {
+            let before = self.list_shown.borrow();
+            before.as_ref().is_some_and(|b| {
+                b.ids == ids
+                    && b.scope == request.query.scope
+                    && b.search == request.query.search
+                    && b.exact == request.query.exact
+                    && b.unread_only == request.query.unread_only
+                    && b.offset == request.query.offset
+                    && self.settings.borrow().filters == filters
+            })
+        };
+        *self.list_shown.borrow_mut() = Some(super::ListShown {
+            scope: request.query.scope.clone(),
+            search: request.query.search.clone(),
+            exact: request.query.exact,
+            unread_only: request.query.unread_only,
+            offset: request.query.offset,
+            ids,
+        });
         self.rebuilding.set(true);
         // The menu stays open over a reload unless its article is no longer listed.
         let gone = self
@@ -347,6 +372,16 @@ impl Ui {
         drop(view);
         self.list.heading.set_text(&heading);
         self.rebuilding.set(false);
+        if restored {
+            let adjustment = self.list.adjustment.clone();
+            let value = *self.list_scroll.borrow();
+            glib::idle_add_local_once(move || {
+                adjustment.set_value(value.clamp(
+                    adjustment.lower(),
+                    (adjustment.upper() - adjustment.page_size()).max(adjustment.lower()),
+                ));
+            });
+        }
         if let Some(id) = shown.reopen {
             self.select(id);
         }
