@@ -156,6 +156,7 @@ impl SidebarPane {
 }
 
 /// The articles last shown in the list: which view, page and filters, and in what order.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ListShown {
     /// Which articles.
     scope: Scope,
@@ -164,8 +165,8 @@ pub(crate) struct ListShown {
     unread_only: bool,
     /// Which page of them.
     offset: usize,
-    /// Their ids, top to bottom.
-    ids: Vec<omafeed_core::model::ArticleId>,
+    /// With which content filters.
+    filters: Vec<String>,
 }
 struct ListPane {
     root: gtk::Box,
@@ -273,9 +274,7 @@ pub struct Ui {
     side: SidebarPane,
     list: ListPane,
     reader: reader::ReaderPane,
-    /// What the list pane is scrolled to.
-    pub(crate) list_scroll: RefCell<f64>,
-    /// The ids, view, and filters last shown in the article list.
+    /// The view and filters last shown in the article list.
     pub(crate) list_shown: RefCell<Option<ListShown>>,
     /// What the sidebar is scrolled to.
     pub(crate) side_scroll: RefCell<f64>,
@@ -397,7 +396,6 @@ impl Ui {
             palette: RefCell::new(palette),
             article_rows: RefCell::default(),
             sidebar_rows: RefCell::default(),
-            list_scroll: RefCell::new(0.0),
             list_shown: RefCell::new(None),
             side_scroll: RefCell::new(0.0),
             side_shown: RefCell::new(None),
@@ -539,14 +537,7 @@ impl Ui {
             self,
             move |_| u.mark_all()
         ));
-        // Remember where the list and sidebar are scrolled, so a reload can put them back.
-        self.list.adjustment.connect_value_changed(clone!(
-            #[weak(rename_to = u)]
-            self,
-            move |a| {
-                *u.list_scroll.borrow_mut() = a.value();
-            }
-        ));
+        // Remember where the sidebar is scrolled, so a rebuild can put it back.
         self.side.adjustment.connect_value_changed(clone!(
             #[weak(rename_to = u)]
             self,
