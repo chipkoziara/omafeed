@@ -593,7 +593,7 @@ impl Ui {
                 self.refresh_line.pulse();
                 self.refresh_line.set_visible(true);
             }
-            Progress::Synced { error } => {
+            Progress::Synced { error, writes } => {
                 self.refresh_stopped();
                 let tip = match &error {
                     Some(e) => format!("Feedbin: {e}"),
@@ -603,7 +603,13 @@ impl Ui {
                     .refresh
                     .set_tooltip_text(Some(&format!("{tip}\n{REFRESH_TIP}")));
                 if error.is_none() {
-                    // Pick up entries the sync added and newly downloaded favicons.
+                    // The next scheduled check is not due until the interval has passed.
+                    self.settings.borrow_mut().last_sync = Some(chrono::Utc::now().timestamp());
+                    self.save();
+                }
+                if error.is_none() && writes > 0 {
+                    // Pick up entries the sync added and newly downloaded favicons. A sync
+                    // with nothing to do changes nothing on the screen either.
                     self.favicons.borrow_mut().clear();
                     self.reload();
                 }
@@ -940,12 +946,14 @@ impl Ui {
         let db = self.db.clone();
         let refresher = self.refresher.clone();
         let minutes = self.settings.borrow().refresh_minutes;
+        let last_sync = self.settings.borrow().last_sync;
         let tx = self.progress.clone();
         let paths = self.paths.clone();
         let (err_tx, err_rx) = async_channel::bounded(1);
         self.runtime.spawn(async move {
             // One Feedbin sync when an account is configured, one pass over the feeds otherwise.
-            if let Err(e) = crate::refresh::refresh(db, paths, refresher, which, minutes, tx).await
+            if let Err(e) =
+                crate::refresh::refresh(db, paths, refresher, which, minutes, last_sync, tx).await
             {
                 let _ = err_tx.send(e.to_string()).await;
             }

@@ -218,6 +218,7 @@ fn settings_files_keep_their_format() {
         selected_article: Some(ArticleId(42)),
         unread_only: true,
         filters: Vec::new(),
+        last_sync: Some(1_700_000_000),
     };
     assert_eq!(saved(&custom), read("settings/custom.toml"));
     for (scope, file) in [

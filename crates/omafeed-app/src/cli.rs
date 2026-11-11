@@ -431,6 +431,7 @@ async fn refresh(db: &Db, paths: &Paths, minutes: u32, json: bool) -> Result<()>
         Refresher::new()?.with_cache(paths.cache.clone()),
         omafeed_core::ingest::Which::All,
         minutes,
+        None,
         tx,
     )
     .await?;

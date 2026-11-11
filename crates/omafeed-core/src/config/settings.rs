@@ -65,6 +65,11 @@ pub struct Settings {
     /// there are some.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub filters: Vec<String>,
+    /// When the window last synced with a Feedbin account, in seconds since the epoch. The
+    /// scheduled refresh goes by it, since a sync covers every subscription at once and has
+    /// no per-feed schedule of its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_sync: Option<i64>,
 }
 
 /// Fall back to the default instead of rejecting the whole settings file.
@@ -103,6 +108,7 @@ impl Default for Settings {
             selected_article: None,
             unread_only: false,
             filters: Vec::new(),
+            last_sync: None,
         }
     }
 }

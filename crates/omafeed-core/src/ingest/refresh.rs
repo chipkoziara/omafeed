@@ -82,6 +82,9 @@ pub enum Progress {
     Synced {
         /// Why it failed, or `None`.
         error: Option<String>,
+        /// Rows the sync wrote. A sync with nothing to do writes none, and the window
+        /// has nothing to reload for it.
+        writes: u64,
     },
 }
 

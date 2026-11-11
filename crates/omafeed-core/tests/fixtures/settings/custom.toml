@@ -8,6 +8,7 @@ sidebar_width = 200
 list_width = 300
 selected_article = 42
 unread_only = true
+last_sync = 1700000000
 
 [scope]
 Folder = 3
