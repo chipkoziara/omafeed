@@ -11,7 +11,7 @@ use omafeed_core::{
     model::{Article, ArticleId, FeedId, Query, Scope, StatePatch},
     reading,
 };
-use std::rc::Rc;
+use std::{rc::Rc, time::Duration};
 
 /// Widgets that change when an article's read or star state changes.
 pub(super) struct ArticleRow {
@@ -303,6 +303,21 @@ impl Ui {
     }
 
     fn show_articles(self: &Rc<Self>, request: &PageRequest, articles: Vec<Article>) {
+        // Where the list is scrolled, before the page it shows is replaced: the article at
+        // its top edge and how far that row starts above the edge. Articles come and go as
+        // they are read, so this is a better anchor than the scroll value.
+        let anchor = self.top_article();
+        let filters = self.settings.borrow().filters.clone();
+        let shown_view = super::ListShown {
+            scope: request.query.scope.clone(),
+            search: request.query.search.clone(),
+            exact: request.query.exact,
+            unread_only: request.query.unread_only,
+            offset: request.query.offset,
+            filters,
+        };
+        let same_view = self.list_shown.borrow().as_ref() == Some(&shown_view);
+        *self.list_shown.borrow_mut() = Some(shown_view);
         let remembered = self.settings.borrow().selected_article;
         let shown = self
             .view
@@ -347,9 +362,64 @@ impl Ui {
         drop(view);
         self.list.heading.set_text(&heading);
         self.rebuilding.set(false);
+        // A reload of the same view stays where it was scrolled; a new view starts at the
+        // top. GTK clamps the empty list to 0, so this waits for the new rows to be laid
+        // out before putting the anchor back.
+        if same_view && let Some(anchor) = anchor {
+            self.restore_scroll(anchor);
+        }
         if let Some(id) = shown.reopen {
             self.select(id);
         }
+    }
+
+    /// The article at the top of the visible list, and how far above the top edge its row
+    /// starts: 0 when the row lines up with it, negative when it is partly scrolled away.
+    fn top_article(&self) -> Option<(ArticleId, f64)> {
+        let top = self.list.adjustment.value();
+        let articles = self.view.borrow();
+        self.article_rows
+            .borrow()
+            .iter()
+            .enumerate()
+            .find_map(|(i, r)| {
+                let bounds = r.row.compute_bounds(&self.list.list)?;
+                let y = f64::from(bounds.y());
+                if f64::from(bounds.height()) + y <= top {
+                    return None;
+                }
+                articles.articles().get(i).map(|a| (a.id, y - top))
+            })
+    }
+
+    /// Scroll so `anchor`'s row starts where it did. The rebuilt rows have no allocation
+    /// until they are laid out, so wait for one.
+    fn restore_scroll(self: &Rc<Self>, anchor: (ArticleId, f64)) {
+        let (id, offset) = anchor;
+        let u = self.clone();
+        let mut tries = 0;
+        glib::timeout_add_local(Duration::from_millis(8), move || {
+            tries += 1;
+            let Some(index) = u.view.borrow().articles().iter().position(|a| a.id == id) else {
+                return glib::ControlFlow::Break;
+            };
+            let y = u.article_rows.borrow().get(index).and_then(|r| {
+                r.row
+                    .compute_bounds(&u.list.list)
+                    .map(|bounds| f64::from(bounds.y()))
+            });
+            let adjustment = &u.list.adjustment;
+            match y {
+                Some(y) if y > 0.0 || index == 0 => {
+                    let last =
+                        (adjustment.upper() - adjustment.page_size()).max(adjustment.lower());
+                    adjustment.set_value((y - offset).clamp(adjustment.lower(), last));
+                    glib::ControlFlow::Break
+                }
+                _ if tries < 10 => glib::ControlFlow::Continue,
+                _ => glib::ControlFlow::Break,
+            }
+        });
     }
 
     pub(super) fn select(self: &Rc<Self>, id: ArticleId) {

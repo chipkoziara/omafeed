@@ -296,10 +296,27 @@ impl Ui {
             .iter()
             .find(|r| r.row.is_focus())
             .map(|r| r.scope.clone());
+        // The scroll survives a rebuild only when the rows do not: same scopes in the same
+        // places, folders folded the same way. While the list is empty GTK clamps it to 0,
+        // so restore it once the new rows are laid out, not here.
+        let items = self.sidebar_items();
+        let collapsed = self.view.borrow().collapsed().clone();
+        let shown = super::SidebarShown(
+            items
+                .iter()
+                .map(|item| super::SidebarRowShown {
+                    scope: item.scope.clone(),
+                    depth: item.depth,
+                    collapsed: matches!(item.scope, Scope::Folder(id) if collapsed.contains(&id)),
+                    has_error: item.feed.as_ref().is_some_and(|f| f.error.is_some()),
+                })
+                .collect(),
+        );
+        let restored = self.side_shown.borrow().as_ref() == Some(&shown);
+        *self.side_shown.borrow_mut() = Some(shown);
         self.side.list.remove_all();
         let selected = self.view.borrow().query.scope.clone();
-        let rows: Vec<Row> = self
-            .sidebar_items()
+        let rows: Vec<Row> = items
             .into_iter()
             .map(|item| self.sidebar_row(item))
             .collect();
@@ -317,6 +334,16 @@ impl Ui {
             }
         }
         *self.sidebar_rows.borrow_mut() = rows;
+        if restored {
+            let adjustment = self.side.adjustment.clone();
+            let value = *self.side_scroll.borrow();
+            glib::idle_add_local_once(move || {
+                adjustment.set_value(value.clamp(
+                    adjustment.lower(),
+                    (adjustment.upper() - adjustment.page_size()).max(adjustment.lower()),
+                ));
+            });
+        }
         if let Some(scope) = focused {
             self.focus_sidebar_row(&scope);
         }
